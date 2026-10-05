@@ -1,0 +1,76 @@
+services:
+  object-store:
+    image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: server -s3 -dir=/data -s3.port=8333
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-surveillance-local}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-surveillance-local-secret}
+    ports:
+      - "8333:8333"
+      - "8888:8888"
+    volumes:
+      - object_store_data:/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16.4
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow-local-only}
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  airflow:
+    build: ./airflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-store:
+        condition: service_started
+    command: standalone
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD:-airflow-local-only}@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-local-development-secret-key}
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-airflow-local-only}
+      S3_ENDPOINT: http://object-store:8333
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-surveillance-local}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-surveillance-local-secret}
+      DATA_LAKE_BUCKET: ${DATA_LAKE_BUCKET:-disease-surveillance}
+      RAW_DATA_DIR: /opt/airflow/data/raw
+      PYTHONPATH: /opt/airflow/project
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./data/raw:/opt/airflow/data/raw:ro
+      - ./data/raw:/opt/airflow/project/data/raw:ro
+      - ./data/processed:/opt/airflow/project/data/processed
+      - ./spark:/opt/airflow/project/spark:ro
+      - airflow_logs:/opt/airflow/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  object_store_data:
+  postgres_data:
+  airflow_logs:

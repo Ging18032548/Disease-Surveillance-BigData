@@ -1,0 +1,9 @@
+data/raw/*
+!data/raw/disease/reference/
+data/processed/
+data/gold/
+__pycache__/
+*.pyc
+.venv/
+.vscode/
+.idea/
